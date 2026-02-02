@@ -13,6 +13,7 @@ from tkinter import filedialog
 import json
 import os
 import sys
+import socket
 
 # ---------------- UI THEME (Modern Dark) ----------------
 # This block only affects styling (colors, rounded controls). Core logic is unchanged.
@@ -366,6 +367,34 @@ def single_ping(ip, timeout=2):
     
 from concurrent.futures import ThreadPoolExecutor
 
+COMMON_PORTS = [
+    (22, "SSH"),
+    (80, "HTTP"),
+    (443, "HTTPS"),
+    (3389, "RDP"),
+]
+
+def check_port(ip, port, timeout=1.0):
+    try:
+        with socket.create_connection((ip, port), timeout=timeout):
+            return True
+    except:
+        return False
+
+
+def port_test_worker(ip, ports=None):
+    if ports is None:
+        ports = COMMON_PORTS
+
+    ui_queue.put(("PORT_TEST_START", ip, None))
+
+    for port, name in ports:
+        ok = check_port(ip, port, timeout=1.0)
+        ui_queue.put(("PORT_TEST_RESULT", ip, (port, name, ok)))
+
+    ui_queue.put(("PORT_TEST_DONE", ip, None))
+
+
 
 def ip_exists(ip, exclude_device=None):
     for d in devices:
@@ -443,6 +472,32 @@ def sort_devices_by_column(col, reverse=False):
 
 def ping_command(ip):
     return ["ping", "-t", ip] if IS_WINDOWS else ["ping", ip]
+
+def traceroute_command(ip):
+    # -d = DNS çözümleme kapalı (daha hızlı)
+    if IS_WINDOWS:
+        return ["tracert", "-d", ip]
+    else:
+        return ["traceroute", ip]
+
+
+def traceroute_worker(ip):
+    flags = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
+
+    proc = subprocess.Popen(
+        traceroute_command(ip),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        creationflags=flags
+    )
+
+    for line in proc.stdout:
+        # traceroute bitene kadar satır satır UI'ye gönder
+        ui_queue.put(("TRACE", ip, line))
+
+    ui_queue.put(("TRACE_DONE", ip, None))
+
 
 def ip_to_tuple(ip):
     try:
@@ -589,6 +644,46 @@ def process_ui_queue():
                     update_tree_item_for_ip(ip)
                     break
 
+                # 🧭 TRACEROUTE
+        elif item_type == "TRACE":
+            line = payload
+
+            output_box.config(state=tk.NORMAL)
+            output_box.insert(tk.END, line)
+            output_box.see(tk.END)
+            output_box.config(state=tk.DISABLED)
+
+        elif item_type == "TRACE_DONE":
+            output_box.config(state=tk.NORMAL)
+            output_box.insert(tk.END, "\n--- Traceroute tamamlandı ---\n")
+            output_box.see(tk.END)
+            output_box.config(state=tk.DISABLED)
+
+                # 🔌 PORT TEST
+        elif item_type == "PORT_TEST_START":
+            output_box.config(state=tk.NORMAL)
+            output_box.insert(tk.END, f"\n--- Port Test Başladı: {ip} ---\n")
+            output_box.see(tk.END)
+            output_box.config(state=tk.DISABLED)
+
+        elif item_type == "PORT_TEST_RESULT":
+            port, name, ok = payload
+            status_txt = "OPEN ✅" if ok else "CLOSED ❌"
+
+            output_box.config(state=tk.NORMAL)
+            output_box.insert(tk.END, f"{port:<5} ({name:<6}) -> {status_txt}\n")
+            output_box.see(tk.END)
+            output_box.config(state=tk.DISABLED)
+
+        elif item_type == "PORT_TEST_DONE":
+            output_box.config(state=tk.NORMAL)
+            output_box.insert(tk.END, f"--- Port Test Bitti: {ip} ---\n\n")
+            output_box.see(tk.END)
+            output_box.config(state=tk.DISABLED)
+
+
+
+
           
 
         # 🔴 TOPLU PING BİTTİ
@@ -640,6 +735,55 @@ def start_ping_from_menu():
     global started_from_entry
     started_from_entry = False
     start_ping()
+
+def start_traceroute_selected():
+    global started_from_entry
+
+    # seçili cihaz yoksa entry'den IP al
+    sel = device_tree.selection()
+    if sel:
+        ip = device_tree.item(sel[0])["values"][1]
+    else:
+        ip = ip_entry.get().strip()
+
+    if not ip:
+        messagebox.showwarning("Uyarı", "Traceroute için bir IP seçin veya girin.")
+        return
+
+    # output'u temizle
+    output_box.config(state=tk.NORMAL)
+    output_box.delete("1.0", tk.END)
+    output_box.config(state=tk.DISABLED)
+
+    # ping çalışıyorsa durdur (aynı anda karışmasın)
+    stop_ping()
+
+    # traceroute thread
+    threading.Thread(target=traceroute_worker, args=(ip,), daemon=True).start()
+
+def start_port_test_selected():
+    # seçili cihaz varsa oradan al
+    sel = device_tree.selection()
+    if sel:
+        ip = device_tree.item(sel[0])["values"][1]
+    else:
+        ip = ip_entry.get().strip()
+
+    if not ip:
+        messagebox.showwarning("Uyarı", "Port testi için bir IP seçin veya girin.")
+        return
+
+    # output'u temizle
+    output_box.config(state=tk.NORMAL)
+    output_box.delete("1.0", tk.END)
+    output_box.config(state=tk.DISABLED)
+
+    # ping çalışıyorsa durdur
+    stop_ping()
+
+    threading.Thread(target=port_test_worker, args=(ip,), daemon=True).start()
+
+
 
 def stop_ping(event=None):
     global is_running, ping_process
@@ -1578,7 +1722,7 @@ style_rounded_button(refresh_btn, _ui_assets, wide=False)
 refresh_btn.pack(side=tk.LEFT, padx=6)
 
 add_btn = tk.Button(left_controls, text="➕ Ekle", command=open_add_device_window)
-style_rounded_button(add_btn, _ui_assets, wide=True)
+style_rounded_button(add_btn, _ui_assets, wide=False)
 add_btn.pack(side=tk.LEFT, padx=6)
 
 excel_btn = tk.Button(left_controls, text="📂 Excel Seç", command=select_excel_file)
@@ -1796,6 +1940,8 @@ context_menu.add_command(
 )
 context_menu.add_command(label="▶ Ping Başlat", command=start_ping_from_menu)
 context_menu.add_command(label="⏹ Ping Durdur", command=stop_ping)
+context_menu.add_command(label="🧭 Traceroute", command=start_traceroute_selected)
+context_menu.add_command(label="🔌 Port Test (SSH/HTTP/HTTPS/RDP)", command=start_port_test_selected)
 context_menu.add_separator()
 context_menu.add_command(
     label="📡 Seçilenlere Toplu Ping",
