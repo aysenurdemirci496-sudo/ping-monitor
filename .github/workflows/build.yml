@@ -18,19 +18,19 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies (print list)
+      - name: Install dependencies and check openpyxl
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
           python -c "import openpyxl; print('OPENPYXL INSTALLED ✅')"
 
-      - name: Build EXE (force collect openpyxl)
+      - name: Build EXE (onedir, stable)
         run: |
-          pyinstaller --onefile --windowed main.py --add-data "assets;assets" --collect-all openpyxl --hidden-import openpyxl
+          pyinstaller --noconfirm --clean --windowed main.py --add-data "assets;assets" --collect-all openpyxl
 
-      - name: Upload EXE artifact
+      - name: Upload EXE artifact (whole dist folder)
         uses: actions/upload-artifact@v4
         with:
-          name: windows-exe
-          path: dist/*.exe
+          name: windows-dist
+          path: dist/
