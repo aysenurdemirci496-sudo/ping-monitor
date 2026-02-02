@@ -27,7 +27,7 @@ jobs:
 
       - name: Build EXE (onedir stable)
         run: |
-          pyinstaller --noconfirm --clean --windowed main.py --add-data "assets;assets" --collect-all openpyxl
+          pyinstaller --noconfirm --clean --onefile --windowed main.py --add-data "assets;assets" --collect-all openpyxl
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
