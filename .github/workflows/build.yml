@@ -18,15 +18,16 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install dependencies (print list)
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
+          python -c "import openpyxl; print('OPENPYXL INSTALLED ✅')"
 
-      - name: Build EXE
+      - name: Build EXE (force collect openpyxl)
         run: |
-          pyinstaller --onefile --windowed main.py --add-data "assets;assets" --hidden-import openpyxl
+          pyinstaller --onefile --windowed main.py --add-data "assets;assets" --collect-all openpyxl --hidden-import openpyxl
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
