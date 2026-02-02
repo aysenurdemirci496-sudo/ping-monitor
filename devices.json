@@ -1,170 +1,146 @@
 [
   {
-    "name": "a_1",
     "ip": "8.8.8.8",
     "latency": 53.0,
     "last_ping": "2026-02-02 11:51:58",
     "status": "NORMAL"
   },
   {
-    "name": "b_2",
     "ip": "2.2.2.2",
     "latency": null,
     "last_ping": "2026-02-02 11:46:45",
     "status": "DOWN"
   },
   {
-    "name": "d_1",
+    "ip": "3.3.3.3",
+    "latency": null,
+    "last_ping": null,
+    "status": "UNKNOWN"
+  },
+  {
     "ip": "149.140.146.212",
     "latency": null,
     "last_ping": "2026-02-02 11:46:45",
     "status": "DOWN"
   },
   {
-    "name": "e_1",
     "ip": "208.67.222.222",
     "latency": 171.0,
     "last_ping": "2026-02-02 11:46:43",
     "status": "SLOW"
   },
   {
-    "name": NaN,
     "ip": "10.20.30.40",
     "latency": null,
     "last_ping": "2026-02-02 11:46:45",
     "status": "DOWN"
   },
   {
-    "name": "f_2",
     "ip": "1.1.1.2",
     "latency": 84.0,
     "last_ping": "2026-02-02 11:46:45",
     "status": "NORMAL"
   },
   {
-    "name": NaN,
     "ip": "5.5.5.5",
     "latency": null,
     "last_ping": "2026-02-02 11:46:45",
     "status": "DOWN"
   },
   {
-    "name": "ckmv",
     "ip": "4.4.4.4",
     "latency": null,
     "last_ping": "2026-02-02 11:46:45",
     "status": "DOWN"
   },
   {
-    "name": "fdlmg",
     "ip": "5.5.5.6",
     "latency": null,
     "last_ping": "2026-02-02 11:46:45",
     "status": "DOWN"
   },
   {
-    "name": "fkm",
     "ip": "4.4.4.5",
     "latency": null,
     "last_ping": "2026-02-02 11:46:45",
     "status": "DOWN"
   },
   {
-    "name": "fdg",
     "ip": "4.4.4.3",
     "latency": null,
     "last_ping": "2026-02-02 11:46:45",
     "status": "DOWN"
   },
   {
-    "name": "fdg",
     "ip": "4.4.4.1",
     "latency": null,
     "last_ping": "2026-02-02 11:46:45",
     "status": "DOWN"
   },
   {
-    "name": "dfg",
     "ip": "8.8.8.2",
     "latency": null,
     "last_ping": "2026-02-02 11:46:45",
     "status": "DOWN"
   },
   {
-    "name": "fb",
     "ip": "2.2.2.1",
     "latency": null,
     "last_ping": "2026-02-02 11:46:47",
     "status": "DOWN"
   },
   {
-    "name": "fb",
     "ip": "1.1.1.2",
     "latency": 84.0,
     "last_ping": "2026-02-02 11:46:45",
     "status": "NORMAL"
   },
   {
-    "name": NaN,
     "ip": "1.1.1.3",
     "latency": 80.0,
     "last_ping": "2026-02-02 11:46:45",
     "status": "NORMAL"
   },
   {
-    "name": NaN,
     "ip": "1.1.1.4",
     "latency": 79.0,
     "last_ping": "2026-02-02 11:46:45",
     "status": "NORMAL"
   },
   {
-    "name": NaN,
     "ip": "1.1.1.5",
     "latency": 86.0,
     "last_ping": "2026-02-02 11:46:45",
     "status": "NORMAL"
   },
   {
-    "name": NaN,
     "ip": "1.1.1.6",
     "latency": 74.0,
     "last_ping": "2026-02-02 11:46:45",
     "status": "NORMAL"
   },
   {
-    "name": NaN,
     "ip": "1.1.1.7",
     "latency": 78.0,
     "last_ping": "2026-02-02 11:46:45",
     "status": "NORMAL"
   },
   {
-    "name": NaN,
     "ip": "1.1.1.8",
     "latency": 79.0,
     "last_ping": "2026-02-02 11:46:45",
     "status": "NORMAL"
   },
   {
-    "name": NaN,
     "ip": "2.2.2.0",
     "latency": null,
     "last_ping": "2026-02-02 11:46:47",
     "status": "DOWN"
   },
   {
-    "name": NaN,
     "ip": "1.1.1.12",
     "latency": 84.0,
     "last_ping": "2026-02-02 11:46:45",
     "status": "NORMAL"
-  },
-  {
-    "name": NaN,
-    "ip": "2.2.2.33",
-    "latency": null,
-    "last_ping": "2026-02-02 11:46:47",
-    "status": "DOWN"
   }
 ]

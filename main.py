@@ -87,6 +87,26 @@ def apply_ttk_dark_style(root):
     )
     style.map("Treeview.Heading", background=[("active", "#25304A")])
 
+        # ===== EXCEL MAPPING COMBOBOX (Windows + macOS) =====
+    style.configure(
+        "ExcelMap.TCombobox",
+        foreground="#000000",
+        fieldbackground="#FFFFFF",
+        background="#FFFFFF"
+    )
+
+    style.map(
+        "ExcelMap.TCombobox",
+        foreground=[
+            ("readonly", "#000000"),
+            ("!disabled", "#000000")
+        ],
+        fieldbackground=[
+            ("readonly", "#FFFFFF"),
+            ("!disabled", "#FFFFFF")
+        ]
+    )
+
     return style
 
 def make_rounded_entry(parent, bg_image, *, font, inner_pad=10):
@@ -887,9 +907,13 @@ def open_mapping_window(excel_headers, on_done):
             row,
             textvariable=var,
             values=[""] + REQUIRED_FIELDS,
-            state="readonly",
-            width=20
+            state="normal",                 # ⬅️ readonly YOK
+            width=20,
+            style="ExcelMap.TCombobox"      # ⬅️ bizim stil
         )
+
+        # yazı yazmayı kapat (readonly gibi davransın)
+        combo.bind("<Key>", lambda e: "break")
         combo.pack(side=tk.LEFT)
 
         mapping_vars[header] = var
@@ -1566,11 +1590,16 @@ def open_filter_window(field):
     tk.Button(bottom, text="OK", width=10, command=apply_filters).pack(side=tk.RIGHT, padx=10)
 
     # ================== VERİLER ==================
+    def ip_key(ip):
+        try:
+            return tuple(int(p) for p in ip.split("."))
+        except:
+            return (999, 999, 999, 999)
+
     values = sorted(
         set(str(d.get(field)) for d in devices if d.get(field)),
-        key=lambda x: tuple(int(p) for p in x.split(".")) if field == "ip" else x.lower()
+        key=ip_key if field == "ip" else lambda x: x.lower()
     )
-
     vars_map = {}
     checkbuttons = {}
 
