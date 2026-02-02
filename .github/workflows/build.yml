@@ -26,7 +26,7 @@ jobs:
 
       - name: Build EXE
         run: |
-          pyinstaller --onefile --windowed main.py --add-data "assets;assets"
+          pyinstaller --onefile --windowed main.py --add-data "assets;assets" --hidden-import openpyxl
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
