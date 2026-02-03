@@ -258,6 +258,7 @@ current_task = None   # None / "PING" / "TRACE" / "NSLOOKUP" / "PORTTEST" / "BUL
 open_ports_found = []
 excel_path = None
 excel_mapping = None
+task_id = 0
 bulk_total = 0
 bulk_done = 0
 PAGE_SIZE = 100
@@ -352,7 +353,7 @@ def nslookup_command(target, dns_server=None):
         return ["nslookup", target, dns_server]
     return ["nslookup", target]
 
-def nslookup_worker(target, dns_server=None):
+def nslookup_worker(target, dns_server=None, tid=None):
     global nslookup_process
     flags = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
 
@@ -367,6 +368,8 @@ def nslookup_worker(target, dns_server=None):
     )
 
     for line in nslookup_process.stdout:
+        if tid is not None and tid != task_id:
+            break
         ui_queue.put(("NSLOOKUP", target, line))
 
     ui_queue.put(("NSLOOKUP_DONE", target, None))
@@ -576,7 +579,7 @@ def check_port(ip, port, timeout=1.0):
     except:
         return False
    
-def port_test_worker(ip, mode="fast"):
+def port_test_worker(ip, mode="fast", tid=None):
     global is_port_test_running, stop_port_test_flag, open_ports_found
     open_ports_found = []   # ✅ her testte sıfırla
     """
@@ -615,10 +618,21 @@ def port_test_worker(ip, mode="fast"):
             return (port, name, ok)
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = [executor.submit(check_one, p) for p in ports]
-
+            futures = []
+            for p in ports:
+                if stop_port_test_flag:
+                    return False
+                if tid is not None and tid != task_id:
+                    return False
+                futures.append(executor.submit(check_one, p))
             for f in as_completed(futures):
                 if stop_port_test_flag:
+                    # ✅ kalan işleri iptal etmeye çalış
+                    try:
+                        for fut in futures:
+                            fut.cancel()
+                    except:
+                        pass
                     return False
 
                 port, name, ok = f.result()
@@ -736,7 +750,7 @@ def traceroute_command(ip):
         return ["traceroute", ip]
 
 
-def traceroute_worker(ip):
+def traceroute_worker(ip, tid):
     global traceroute_process
     flags = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
 
@@ -749,11 +763,13 @@ def traceroute_worker(ip):
     )
 
     for line in traceroute_process.stdout:
+        # ✅ eğer yeni bir task başladıysa artık yazma
+        if tid != task_id:
+            break
         ui_queue.put(("TRACE", ip, line))
 
     ui_queue.put(("TRACE_DONE", ip, None))
     traceroute_process = None
-
 
 def ip_to_tuple(ip):
     try:
@@ -1034,7 +1050,8 @@ def process_ui_queue():
 
 # ---------------- ACTIONS ----------------
 def lock_ui(task_name):
-    global current_task
+    global current_task, task_id
+    task_id += 1
     current_task = task_name
 
     refresh_btn.ui_set_enabled(False)
@@ -1099,9 +1116,7 @@ def start_traceroute_selected():
     if not can_start_new_task():
         return
     lock_ui("TRACE")
-    global started_from_entry
 
-    # seçili cihaz yoksa entry'den IP al
     sel = device_tree.selection()
     if sel:
         ip = device_tree.item(sel[0])["values"][1]
@@ -1110,24 +1125,23 @@ def start_traceroute_selected():
 
     if not ip:
         messagebox.showwarning("Uyarı", "Traceroute için bir IP seçin veya girin.")
+        unlock_ui()
         return
 
-    # output'u temizle
     output_box.config(state=tk.NORMAL)
     output_box.delete("1.0", tk.END)
     output_box.config(state=tk.DISABLED)
 
-    # ping çalışıyorsa durdur (aynı anda karışmasın)
     stop_ping()
 
-    # traceroute thread
-    threading.Thread(target=traceroute_worker, args=(ip,), daemon=True).start()
+    tid = task_id
+    threading.Thread(target=traceroute_worker, args=(ip, tid), daemon=True).start()
 
 def start_port_test_selected(mode="fast"):
     if not can_start_new_task():
         return
     lock_ui("PORTTEST")
-    # seçili cihaz varsa oradan al
+
     sel = device_tree.selection()
     if sel:
         ip = device_tree.item(sel[0])["values"][1]
@@ -1136,25 +1150,22 @@ def start_port_test_selected(mode="fast"):
 
     if not ip:
         messagebox.showwarning("Uyarı", "Port testi için bir IP seçin veya girin.")
+        unlock_ui()
         return
 
-    # output'u temizle
     output_box.config(state=tk.NORMAL)
     output_box.delete("1.0", tk.END)
     output_box.config(state=tk.DISABLED)
 
-    # ping çalışıyorsa durdur
     stop_ping()
-
     global is_running
     is_running = False
 
-    # Start butonu port test sırasında "Durdur" gibi dursun
     start_btn.config(text="⏹ Durdur")
     start_btn.ui_set_enabled(True)
 
-    # ✅ mode'u burada gönderiyoruz
-    threading.Thread(target=port_test_worker, args=(ip, mode), daemon=True).start()
+    tid = task_id
+    threading.Thread(target=port_test_worker, args=(ip, mode, tid), daemon=True).start()
 
 def stop_port_test():
     global stop_port_test_flag, is_port_test_running
@@ -1165,12 +1176,24 @@ def stop_port_test():
     bulk_status_label.config(text="Port test durduruluyor...")
     root.after(2000, lambda: bulk_status_label.config(text=""))
 
+    # ✅ KUYRUK TEMİZLE (port test mesajlarını kes)
+    try:
+        new_q = queue.Queue()
+        while not ui_queue.empty():
+            item = ui_queue.get_nowait()
+            if item[0].startswith("PORT_TEST"):
+                continue
+            new_q.put(item)
+        globals()["ui_queue"] = new_q
+    except:
+        pass
+    unlock_ui()
+
 def start_nslookup_selected():
     if not can_start_new_task():
         return
     lock_ui("NSLOOKUP")
 
-    # seçili cihaz varsa IP'sini al
     sel = device_tree.selection()
     if sel:
         target = device_tree.item(sel[0])["values"][1]
@@ -1179,6 +1202,7 @@ def start_nslookup_selected():
 
     if not target:
         messagebox.showwarning("Uyarı", "NSLOOKUP için bir hedef girin (IP veya domain).")
+        unlock_ui()
         return
 
     output_box.config(state=tk.NORMAL)
@@ -1187,7 +1211,8 @@ def start_nslookup_selected():
 
     stop_ping()
 
-    threading.Thread(target=nslookup_worker, args=(target,), daemon=True).start()
+    tid = task_id
+    threading.Thread(target=nslookup_worker, args=(target, None, tid), daemon=True).start()
 
 def stop_ping_silent():
     global is_running, ping_process
