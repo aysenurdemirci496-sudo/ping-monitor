@@ -35,24 +35,26 @@ def add_device_to_excel(device, excel_path, excel_mapping):
 
 
 def load_devices_from_excel(path, mapping):
+    if not mapping:
+        raise ValueError("Excel kolon eşleştirmesi yok (mapping boş)")
     devices = []
 
-    # 1️⃣ ÖNCE PANDAS DENE
-    try:
-        import pandas as pd
+        # 1️⃣ SADECE XLSX İÇİN PANDAS
+    if path.lower().endswith(".xlsx"):
+        try:
+            import pandas as pd
+            df = pd.read_excel(path)
 
-        df = pd.read_excel(path)
+            for _, row in df.iterrows():
+                device = {}
+                for field, header in mapping.items():
+                    device[field] = row.get(header)
+                devices.append(device)
 
-        for _, row in df.iterrows():
-            device = {}
-            for field, header in mapping.items():
-                device[field] = row.get(header)
-            devices.append(device)
+            return devices
 
-        return devices
-
-    except Exception:
-        pass   # pandas yoksa sessizce devam et
+        except Exception:
+            pass   # xlsx ama pandas yoksa openpyxl'e düş
 
     # 2️⃣ FALLBACK → OPENPYXL
 
