@@ -254,6 +254,7 @@ FONT_NAME = "Segoe UI" if IS_WINDOWS else "Helvetica"
 
 # ---------------- GLOBAL STATE ----------------
 CONFIG_FILE = "config.json"
+open_ports_found = []
 excel_path = None
 excel_mapping = None
 bulk_total = 0
@@ -294,6 +295,8 @@ is_bulk_running = False
 ping_thread = None
 ui_queue = queue.Queue()
 started_from_entry = False
+is_port_test_running = False
+stop_port_test_flag = False
 
 def update_column_headers():
     for col, field in COLUMN_TO_FIELD.items():
@@ -340,6 +343,30 @@ def update_tree_item_for_ip(ip):
             return
 
 # ---------------- PING HELPERS ----------------
+def nslookup_command(target, dns_server=None):
+    # target = domain veya ip olabilir
+    if dns_server:
+        return ["nslookup", target, dns_server]
+    return ["nslookup", target]
+
+def nslookup_worker(target, dns_server=None):
+    flags = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
+
+    ui_queue.put(("NSLOOKUP_START", target, None))
+
+    proc = subprocess.Popen(
+        nslookup_command(target, dns_server),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        creationflags=flags
+    )
+
+    for line in proc.stdout:
+        ui_queue.put(("NSLOOKUP", target, line))
+
+    ui_queue.put(("NSLOOKUP_DONE", target, None))
+
 def extract_ping_ms(text):
     text = text.lower()
 
@@ -385,7 +412,7 @@ def single_ping(ip, timeout=2):
     except Exception:
         return None
     
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 COMMON_PORTS = [
     (22, "SSH"),
@@ -393,6 +420,149 @@ COMMON_PORTS = [
     (443, "HTTPS"),
     (3389, "RDP"),
 ]
+PRIORITY_PORTS = [
+    (22,  "SSH"),
+    (80,  "HTTP"),
+    (443, "HTTPS"),
+    (445, "SMB"),
+    (3389, "RDP"),
+    (53,  "DNS"),
+    (139, "NETBIOS"),
+    (161, "SNMP"),
+    (8080, "HTTP-ALT"),
+]
+
+SECONDARY_PORTS = [
+    # ===== File Transfer / Legacy =====
+    (20,  "FTP-DATA"),
+    (21,  "FTP"),
+    (22,  "SSH"),           # priority'de var ama tekrar sorun değil
+    (23,  "TELNET"),
+    (69,  "TFTP"),
+    (115, "SFTP"),
+    (989, "FTPS-DATA"),
+    (990, "FTPS"),
+    (873, "RSYNC"),
+
+    # ===== Web / Proxy =====
+    (80,   "HTTP"),
+    (81,   "HTTP-ALT"),
+    (443,  "HTTPS"),
+    (8000, "HTTP-ALT"),
+    (8008, "HTTP-ALT"),
+    (8080, "HTTP-PROXY"),
+    (8081, "HTTP-ALT"),
+    (8088, "HTTP-ALT"),
+    (8443, "HTTPS-ALT"),
+    (8888, "HTTP-ALT"),
+
+    # ===== DNS / DHCP / Time =====
+    (53,   "DNS"),
+    (67,   "DHCP-SRV"),
+    (68,   "DHCP-CLI"),
+    (123,  "NTP"),
+
+    # ===== Mail =====
+    (25,   "SMTP"),
+    (110,  "POP3"),
+    (143,  "IMAP"),
+    (465,  "SMTPS"),
+    (587,  "SMTP-SUB"),
+    (993,  "IMAPS"),
+    (995,  "POP3S"),
+
+    # ===== Windows / AD / SMB =====
+    (88,   "KERBEROS"),
+    (135,  "RPC-EPMAP"),
+    (137,  "NETBIOS-NS"),
+    (138,  "NETBIOS-DGM"),
+    (139,  "NETBIOS-SSN"),
+    (389,  "LDAP"),
+    (445,  "SMB"),
+    (464,  "KPASSWD"),
+    (636,  "LDAPS"),
+    (3268, "GC-LDAP"),
+    (3269, "GC-LDAPS"),
+
+    # ===== Remote Access =====
+    (5900, "VNC"),
+    (5901, "VNC-ALT"),
+    (5938, "TeamViewer"),
+    (3389, "RDP"),
+    (22,   "SSH"),
+    (2222, "SSH-ALT"),
+    (5800, "VNC-WEB"),
+
+    # ===== Printing =====
+    (515,  "LPD"),
+    (631,  "IPP"),
+
+    # ===== Network Management =====
+    (161,  "SNMP"),
+    (162,  "SNMP-TRAP"),
+    (514,  "SYSLOG"),
+    (179,  "BGP"),
+
+    # ===== Databases =====
+    (1433, "MSSQL"),
+    (1434, "MSSQL-BROWSER"),
+    (1521, "ORACLE"),
+    (2049, "NFS"),
+    (27017, "MongoDB"),
+    (3306, "MySQL"),
+    (5432, "PostgreSQL"),
+    (6379, "Redis"),
+    (11211, "Memcached"),
+    (9200, "Elastic"),
+    (9300, "Elastic-Transport"),
+
+    # ===== Message Brokers / IoT =====
+    (1883,  "MQTT"),
+    (8883,  "MQTT-TLS"),
+    (5672,  "AMQP"),
+    (15672, "RabbitMQ-UI"),
+    (9092,  "Kafka"),
+    (9093,  "Kafka-SSL"),
+
+    # ===== VoIP =====
+    (5060, "SIP"),
+    (5061, "SIPS"),
+    (1720, "H.323"),
+
+    # ===== VPN / Tunneling =====
+    (500,  "IKE"),
+    (1701, "L2TP"),
+    (1723, "PPTP"),
+    (4500, "IPSEC-NAT-T"),
+    (1194, "OpenVPN"),
+    (51820, "WireGuard"),
+
+    # ===== Virtualization / Remote Mgmt =====
+    (902,  "VMware"),
+    (903,  "VMware-ALT"),
+    (9443, "vSphere-ALT"),
+    (5985, "WinRM-HTTP"),
+    (5986, "WinRM-HTTPS"),
+
+    # ===== DevOps / Containers =====
+    (2375, "Docker"),
+    (2376, "Docker-TLS"),
+    (6443, "Kubernetes-API"),
+
+    # ===== Git / CI =====
+    (9418, "GIT"),
+
+    # ===== Media / Streaming =====
+    (554,  "RTSP"),
+    (1935, "RTMP"),
+
+    # ===== Other Common =====
+    (111,  "RPC"),
+    (2048, "DLS-MON"),
+    (6667, "IRC"),
+]
+# ✅ FULL PORT SCAN (1-65535)
+ALL_PORTS = [(p, f"PORT-{p}") for p in range(1, 65536)]
 
 def check_port(ip, port, timeout=1.0):
     try:
@@ -402,17 +572,78 @@ def check_port(ip, port, timeout=1.0):
         return False
 
 
-def port_test_worker(ip, ports=None):
-    if ports is None:
-        ports = COMMON_PORTS
+def port_test_worker(ip, mode="fast"):
+    """
+    mode = "fast"  -> PRIORITY + SECONDARY
+    mode = "full"  -> PRIORITY + ALL_PORTS
+    """
+    global is_port_test_running, stop_port_test_flag
 
-    ui_queue.put(("PORT_TEST_START", ip, None))
+    is_port_test_running = True
+    stop_port_test_flag = False
 
-    for port, name in ports:
-        ok = check_port(ip, port, timeout=1.0)
-        ui_queue.put(("PORT_TEST_RESULT", ip, (port, name, ok)))
+    if mode == "full":
+        phase2_ports = ALL_PORTS
+        phase2_name = "Tüm Portlar (1-65535)"
+        phase2_timeout = 0.35
+        phase2_workers = 80
+    else:
+        phase2_ports = SECONDARY_PORTS
+        phase2_name = "Diğer Portlar"
+        phase2_timeout = 0.9
+        phase2_workers = 30
 
-    ui_queue.put(("PORT_TEST_DONE", ip, None))
+    total_ports = len(PRIORITY_PORTS) + len(phase2_ports)
+    done = 0
+    open_count = 0
+    closed_count = 0
+
+    ui_queue.put(("PORT_TEST_START", ip, total_ports))
+
+    def run_phase(ports, phase_name, timeout, workers):
+        nonlocal done, open_count, closed_count
+
+        ui_queue.put(("PORT_TEST_PHASE", ip, phase_name))
+
+        def check_one(p):
+            port, name = p
+            ok = check_port(ip, port, timeout=timeout)
+            return (port, name, ok)
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(check_one, p) for p in ports]
+
+            for f in as_completed(futures):
+                if stop_port_test_flag:
+                    return False
+
+                port, name, ok = f.result()
+
+                done += 1
+                if ok:
+                    open_count += 1
+                else:
+                    closed_count += 1
+
+                ui_queue.put(("PORT_TEST_RESULT", ip, (port, name, ok, phase_name)))
+                ui_queue.put(("PORT_TEST_PROGRESS", ip, (done, total_ports, open_count, closed_count)))
+
+        return True
+
+    ok1 = run_phase(PRIORITY_PORTS, "Öncelikli Portlar", timeout=0.6, workers=40)
+    if not ok1:
+        ui_queue.put(("PORT_TEST_CANCELLED", ip, (done, total_ports, open_count, closed_count)))
+        is_port_test_running = False
+        return
+
+    ok2 = run_phase(phase2_ports, phase2_name, timeout=phase2_timeout, workers=phase2_workers)
+    if not ok2:
+        ui_queue.put(("PORT_TEST_CANCELLED", ip, (done, total_ports, open_count, closed_count)))
+        is_port_test_running = False
+        return
+
+    ui_queue.put(("PORT_TEST_DONE", ip, (done, total_ports, open_count, closed_count)))
+    is_port_test_running = False
 
 
 
@@ -617,8 +848,12 @@ def ping_loop(ip):
 
 # ---------------- UI QUEUE ----------------
 def process_ui_queue():
-    while not ui_queue.empty():
+    MAX_ITEMS_PER_TICK = 200
+    count = 0
+
+    while not ui_queue.empty() and count < MAX_ITEMS_PER_TICK:
         item = ui_queue.get()
+        count += 1
 
         item_type, ip, payload = item
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -686,25 +921,79 @@ def process_ui_queue():
             output_box.see(tk.END)
             output_box.config(state=tk.DISABLED)
 
-        elif item_type == "PORT_TEST_RESULT":
-            port, name, ok = payload
-            status_txt = "OPEN ✅" if ok else "CLOSED ❌"
-
+        elif item_type == "PORT_TEST_PHASE":
+            phase_name = payload
             output_box.config(state=tk.NORMAL)
-            output_box.insert(tk.END, f"{port:<5} ({name:<6}) -> {status_txt}\n")
+            output_box.insert(tk.END, f"\n>>> {phase_name} <<<\n")
             output_box.see(tk.END)
             output_box.config(state=tk.DISABLED)
+
+        elif item_type == "PORT_TEST_RESULT":
+            port, name, ok, phase_name = payload
+
+            if ok:
+                open_ports_found.append((port, name))
 
         elif item_type == "PORT_TEST_DONE":
+            done, total, open_count, closed_count = payload
+
             output_box.config(state=tk.NORMAL)
-            output_box.insert(tk.END, f"--- Port Test Bitti: {ip} ---\n\n")
+            output_box.insert(tk.END, f"\n--- Port Test Bitti: {ip} ---\n")
+            output_box.insert(tk.END, f"Toplam: {total} | OPEN: {open_count} | CLOSED: {closed_count}\n\n")
             output_box.see(tk.END)
             output_box.config(state=tk.DISABLED)
 
+            bulk_status_label.config(text="")
+            start_btn.config(text="▶ Başlat")
+            bulk_status_label.config(text="")
+            # ✅ Port test bitti -> OPEN portları tek seferde yaz
+            output_box.config(state=tk.NORMAL)
+            output_box.insert(tk.END, "\n=== OPEN PORTLAR ===\n")
 
+            for port, name in sorted(open_ports_found):
+                output_box.insert(tk.END, f"{port:<5} ({name}) -> OPEN ✅\n")
 
+            output_box.insert(tk.END, "\n")
+            output_box.see(tk.END)
+            output_box.config(state=tk.DISABLED)
+        elif item_type == "PORT_TEST_CANCELLED":
+            done, total, open_count, closed_count = payload
 
-          
+            output_box.config(state=tk.NORMAL)
+            output_box.insert(tk.END, f"\n--- Port Test DURDURULDU: {ip} ---\n")
+            output_box.insert(tk.END, f"İlerleme: {done}/{total} | OPEN: {open_count} | CLOSED: {closed_count}\n\n")
+            output_box.see(tk.END)
+            output_box.config(state=tk.DISABLED)
+
+            bulk_status_label.config(text="Port test durduruldu.")
+            root.after(3000, lambda: bulk_status_label.config(text=""))
+
+            start_btn.config(text="▶ Başlat")
+
+        elif item_type == "PORT_TEST_PROGRESS":
+            done, total, open_count, closed_count = payload
+            bulk_status_label.config(
+                text=f"Port Test: {done}/{total}  |  OPEN:{open_count}  CLOSED:{closed_count}"
+            )        
+
+                # 🌐 NSLOOKUP
+        elif item_type == "NSLOOKUP_START":
+            output_box.config(state=tk.NORMAL)
+            output_box.insert(tk.END, f"\n--- NSLOOKUP Başladı: {ip} ---\n")
+            output_box.see(tk.END)
+            output_box.config(state=tk.DISABLED)
+
+        elif item_type == "NSLOOKUP":
+            output_box.config(state=tk.NORMAL)
+            output_box.insert(tk.END, payload)
+            output_box.see(tk.END)
+            output_box.config(state=tk.DISABLED)
+
+        elif item_type == "NSLOOKUP_DONE":
+            output_box.config(state=tk.NORMAL)
+            output_box.insert(tk.END, f"--- NSLOOKUP Bitti: {ip} ---\n\n")
+            output_box.see(tk.END)
+            output_box.config(state=tk.DISABLED)
 
         # 🔴 TOPLU PING BİTTİ
         elif item_type == "BULK_DONE":
@@ -781,7 +1070,7 @@ def start_traceroute_selected():
     # traceroute thread
     threading.Thread(target=traceroute_worker, args=(ip,), daemon=True).start()
 
-def start_port_test_selected():
+def start_port_test_selected(mode="fast"):
     # seçili cihaz varsa oradan al
     sel = device_tree.selection()
     if sel:
@@ -801,8 +1090,39 @@ def start_port_test_selected():
     # ping çalışıyorsa durdur
     stop_ping()
 
-    threading.Thread(target=port_test_worker, args=(ip,), daemon=True).start()
+    global is_running
+    is_running = False
 
+    # Start butonu port test sırasında "Durdur" gibi dursun
+    start_btn.config(text="⏹ Durdur")
+    start_btn.ui_set_enabled(True)
+
+    # ✅ mode'u burada gönderiyoruz
+    threading.Thread(target=port_test_worker, args=(ip, mode), daemon=True).start()
+
+def stop_port_test():
+    global stop_port_test_flag
+    stop_port_test_flag = True
+
+def start_nslookup_selected():
+    # seçili cihaz varsa IP'sini al
+    sel = device_tree.selection()
+    if sel:
+        target = device_tree.item(sel[0])["values"][1]
+    else:
+        target = ip_entry.get().strip()
+
+    if not target:
+        messagebox.showwarning("Uyarı", "NSLOOKUP için bir hedef girin (IP veya domain).")
+        return
+
+    output_box.config(state=tk.NORMAL)
+    output_box.delete("1.0", tk.END)
+    output_box.config(state=tk.DISABLED)
+
+    stop_ping()
+
+    threading.Thread(target=nslookup_worker, args=(target,), daemon=True).start()
 
 
 def stop_ping(event=None):
@@ -822,6 +1142,12 @@ def stop_ping(event=None):
 
 
 def toggle_ping():
+    # Port Test çalışıyorsa Durdur butonu onu iptal etsin
+    if is_port_test_running:
+        stop_port_test()
+        return
+
+    # normal ping toggle
     if is_running:
         stop_ping()
     else:
@@ -1237,7 +1563,8 @@ def start_bulk_ping():
     start_btn.ui_set_enabled(False)
     refresh_btn.ui_set_enabled(False)
     add_btn.ui_set_enabled(False)
-
+    start_btn.config(text="⏹ Durdur")
+    start_btn.ui_set_enabled(True)
     threading.Thread(
         target=bulk_ping_worker,
         args=(devices_to_ping,),
@@ -1782,8 +2109,28 @@ top_controls = [
 main = tk.PanedWindow(root, orient=tk.HORIZONTAL, bg=BG_COLOR, bd=0, sashwidth=6, sashrelief='flat')
 main.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-output_box = tk.Text(main, state=tk.DISABLED, font=(FONT_NAME, 11), bg=PANEL_COLOR, fg=FG_COLOR, insertbackground=FG_COLOR, relief='flat', bd=0, highlightthickness=0)
-main.add(output_box)
+# ✅ OUTPUT BOX container (scrollbar + text)
+output_container = tk.Frame(main, bg=BG_COLOR)
+main.add(output_container)
+
+output_scroll = ttk.Scrollbar(output_container, orient=tk.VERTICAL)
+output_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+output_box = tk.Text(
+    output_container,
+    state=tk.DISABLED,
+    font=(FONT_NAME, 11),
+    bg=PANEL_COLOR,
+    fg=FG_COLOR,
+    insertbackground=FG_COLOR,
+    relief='flat',
+    bd=0,
+    highlightthickness=0,
+    yscrollcommand=output_scroll.set
+)
+output_box.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+output_scroll.config(command=output_box.yview)
 
 right = tk.Frame(main, bg=BG_COLOR)
 main.add(right)
@@ -1970,7 +2317,16 @@ context_menu.add_command(
 context_menu.add_command(label="▶ Ping Başlat", command=start_ping_from_menu)
 context_menu.add_command(label="⏹ Ping Durdur", command=stop_ping)
 context_menu.add_command(label="🧭 Traceroute", command=start_traceroute_selected)
-context_menu.add_command(label="🔌 Port Test (SSH/HTTP/HTTPS/RDP)", command=start_port_test_selected)
+context_menu.add_command(
+    label="🔌 Port Test (Hızlı: Öncelikli + Diğer)",
+    command=lambda: start_port_test_selected("fast")
+)
+
+context_menu.add_command(
+    label="🔥 Port Test (FULL 1-65535) [Riskli/Uzun]",
+    command=lambda: start_port_test_selected("full")
+)
+context_menu.add_command(label="🌐 NSLOOKUP (DNS Test)", command=start_nslookup_selected)
 context_menu.add_separator()
 context_menu.add_command(
     label="📡 Seçilenlere Toplu Ping",
