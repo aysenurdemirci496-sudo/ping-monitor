@@ -1,3 +1,5 @@
+
+
 import tkinter as tk
 from tkinter import ttk
 import subprocess
@@ -254,18 +256,14 @@ FONT_NAME = "Segoe UI" if IS_WINDOWS else "Helvetica"
 
 # ---------------- GLOBAL STATE ----------------
 CONFIG_FILE = "config.json"
-current_task = None   # None / "PING" / "TRACE" / "NSLOOKUP" / "PORTTEST" / "BULK"
 open_ports_found = []
 excel_path = None
 excel_mapping = None
-task_id = 0
 bulk_total = 0
 bulk_done = 0
 PAGE_SIZE = 100
 current_page = 1
 total_pages = 1
-traceroute_process = None
-nslookup_process = None
 REQUIRED_FIELDS = [
     "ip",
     "device",
@@ -353,13 +351,12 @@ def nslookup_command(target, dns_server=None):
         return ["nslookup", target, dns_server]
     return ["nslookup", target]
 
-def nslookup_worker(target, dns_server=None, tid=None):
-    global nslookup_process
+def nslookup_worker(target, dns_server=None):
     flags = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
 
     ui_queue.put(("NSLOOKUP_START", target, None))
 
-    nslookup_process = subprocess.Popen(
+    proc = subprocess.Popen(
         nslookup_command(target, dns_server),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -367,13 +364,10 @@ def nslookup_worker(target, dns_server=None, tid=None):
         creationflags=flags
     )
 
-    for line in nslookup_process.stdout:
-        if tid is not None and tid != task_id:
-            break
+    for line in proc.stdout:
         ui_queue.put(("NSLOOKUP", target, line))
 
     ui_queue.put(("NSLOOKUP_DONE", target, None))
-    nslookup_process = None
 
 def extract_ping_ms(text):
     text = text.lower()
@@ -579,7 +573,7 @@ def check_port(ip, port, timeout=1.0):
     except:
         return False
    
-def port_test_worker(ip, mode="fast", tid=None):
+def port_test_worker(ip, mode="fast"):
     global is_port_test_running, stop_port_test_flag, open_ports_found
     open_ports_found = []   # ✅ her testte sıfırla
     """
@@ -618,21 +612,10 @@ def port_test_worker(ip, mode="fast", tid=None):
             return (port, name, ok)
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = []
-            for p in ports:
-                if stop_port_test_flag:
-                    return False
-                if tid is not None and tid != task_id:
-                    return False
-                futures.append(executor.submit(check_one, p))
+            futures = [executor.submit(check_one, p) for p in ports]
+
             for f in as_completed(futures):
                 if stop_port_test_flag:
-                    # ✅ kalan işleri iptal etmeye çalış
-                    try:
-                        for fut in futures:
-                            fut.cancel()
-                    except:
-                        pass
                     return False
 
                 port, name, ok = f.result()
@@ -750,11 +733,10 @@ def traceroute_command(ip):
         return ["traceroute", ip]
 
 
-def traceroute_worker(ip, tid):
-    global traceroute_process
+def traceroute_worker(ip):
     flags = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
 
-    traceroute_process = subprocess.Popen(
+    proc = subprocess.Popen(
         traceroute_command(ip),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -762,14 +744,12 @@ def traceroute_worker(ip, tid):
         creationflags=flags
     )
 
-    for line in traceroute_process.stdout:
-        # ✅ eğer yeni bir task başladıysa artık yazma
-        if tid != task_id:
-            break
+    for line in proc.stdout:
+        # traceroute bitene kadar satır satır UI'ye gönder
         ui_queue.put(("TRACE", ip, line))
 
     ui_queue.put(("TRACE_DONE", ip, None))
-    traceroute_process = None
+
 
 def ip_to_tuple(ip):
     try:
@@ -868,7 +848,6 @@ def ping_loop(ip):
         pass
 
 # ---------------- UI QUEUE ----------------
-
 def process_ui_queue():
     MAX_ITEMS_PER_TICK = 200
     count = 0
@@ -936,8 +915,6 @@ def process_ui_queue():
             output_box.see(tk.END)
             output_box.config(state=tk.DISABLED)
 
-            unlock_ui()
-
                 # 🔌 PORT TEST
         elif item_type == "PORT_TEST_START":
             output_box.config(state=tk.NORMAL)
@@ -987,7 +964,6 @@ def process_ui_queue():
             output_box.insert(tk.END, "\n")
             output_box.see(tk.END)
             output_box.config(state=tk.DISABLED)
-            unlock_ui()
         elif item_type == "PORT_TEST_CANCELLED":
             done, total, open_count, closed_count = payload
 
@@ -996,7 +972,6 @@ def process_ui_queue():
             output_box.insert(tk.END, f"İlerleme: {done}/{total} | OPEN: {open_count} | CLOSED: {closed_count}\n\n")
             output_box.see(tk.END)
             output_box.config(state=tk.DISABLED)
-            unlock_ui()
 
             bulk_status_label.config(text="Port test durduruldu.")
             root.after(3000, lambda: bulk_status_label.config(text=""))
@@ -1027,7 +1002,6 @@ def process_ui_queue():
             output_box.insert(tk.END, f"--- NSLOOKUP Bitti: {ip} ---\n\n")
             output_box.see(tk.END)
             output_box.config(state=tk.DISABLED)
-            unlock_ui()
 
         # 🔴 TOPLU PING BİTTİ
         elif item_type == "BULK_DONE":
@@ -1043,47 +1017,14 @@ def process_ui_queue():
             )
               # ⏱ 3 saniye sonra temizle
             root.after(5000, lambda: bulk_status_label.config(text=""))
-            unlock_ui()
   
 
     root.after(30, process_ui_queue)
 
 # ---------------- ACTIONS ----------------
-def lock_ui(task_name):
-    global current_task, task_id
-    task_id += 1
-    current_task = task_name
-
-    refresh_btn.ui_set_enabled(False)
-    add_btn.ui_set_enabled(False)
-    excel_btn.ui_set_enabled(False)
-
-    start_btn.config(text="⏹ Durdur")
-    start_btn.ui_set_enabled(True)
-
-def unlock_ui():
-    global current_task
-    current_task = None
-
-    refresh_btn.ui_set_enabled(True)
-    add_btn.ui_set_enabled(True)
-    excel_btn.ui_set_enabled(True)
-
-    start_btn.config(text="▶ Başlat")
-    start_btn.ui_set_enabled(True)
-
-def can_start_new_task():
-    if current_task is not None:
-        messagebox.showwarning("Meşgul", "Şu an bir işlem çalışıyor. Önce DURDUR.")
-        return False
-    return True
-
 def start_ping(event=None):
     global is_running, current_ip, ping_thread, started_from_entry
     bulk_status_label.config(text="")
-    if not can_start_new_task():
-        return
-    lock_ui("PING")
     ip = ip_entry.get().strip()
     if not ip:
         return
@@ -1091,7 +1032,7 @@ def start_ping(event=None):
     # 🔴 BU SATIR KRİTİK
     started_from_entry = True
 
-    stop_ping_silent()
+    stop_ping()
 
     is_running = True
     current_ip = ip
@@ -1113,10 +1054,9 @@ def start_ping_from_menu():
     start_ping()
 
 def start_traceroute_selected():
-    if not can_start_new_task():
-        return
-    lock_ui("TRACE")
+    global started_from_entry
 
+    # seçili cihaz yoksa entry'den IP al
     sel = device_tree.selection()
     if sel:
         ip = device_tree.item(sel[0])["values"][1]
@@ -1125,23 +1065,21 @@ def start_traceroute_selected():
 
     if not ip:
         messagebox.showwarning("Uyarı", "Traceroute için bir IP seçin veya girin.")
-        unlock_ui()
         return
 
+    # output'u temizle
     output_box.config(state=tk.NORMAL)
     output_box.delete("1.0", tk.END)
     output_box.config(state=tk.DISABLED)
 
+    # ping çalışıyorsa durdur (aynı anda karışmasın)
     stop_ping()
 
-    tid = task_id
-    threading.Thread(target=traceroute_worker, args=(ip, tid), daemon=True).start()
+    # traceroute thread
+    threading.Thread(target=traceroute_worker, args=(ip,), daemon=True).start()
 
 def start_port_test_selected(mode="fast"):
-    if not can_start_new_task():
-        return
-    lock_ui("PORTTEST")
-
+    # seçili cihaz varsa oradan al
     sel = device_tree.selection()
     if sel:
         ip = device_tree.item(sel[0])["values"][1]
@@ -1150,22 +1088,25 @@ def start_port_test_selected(mode="fast"):
 
     if not ip:
         messagebox.showwarning("Uyarı", "Port testi için bir IP seçin veya girin.")
-        unlock_ui()
         return
 
+    # output'u temizle
     output_box.config(state=tk.NORMAL)
     output_box.delete("1.0", tk.END)
     output_box.config(state=tk.DISABLED)
 
+    # ping çalışıyorsa durdur
     stop_ping()
+
     global is_running
     is_running = False
 
+    # Start butonu port test sırasında "Durdur" gibi dursun
     start_btn.config(text="⏹ Durdur")
     start_btn.ui_set_enabled(True)
 
-    tid = task_id
-    threading.Thread(target=port_test_worker, args=(ip, mode, tid), daemon=True).start()
+    # ✅ mode'u burada gönderiyoruz
+    threading.Thread(target=port_test_worker, args=(ip, mode), daemon=True).start()
 
 def stop_port_test():
     global stop_port_test_flag, is_port_test_running
@@ -1176,24 +1117,8 @@ def stop_port_test():
     bulk_status_label.config(text="Port test durduruluyor...")
     root.after(2000, lambda: bulk_status_label.config(text=""))
 
-    # ✅ KUYRUK TEMİZLE (port test mesajlarını kes)
-    try:
-        new_q = queue.Queue()
-        while not ui_queue.empty():
-            item = ui_queue.get_nowait()
-            if item[0].startswith("PORT_TEST"):
-                continue
-            new_q.put(item)
-        globals()["ui_queue"] = new_q
-    except:
-        pass
-    unlock_ui()
-
 def start_nslookup_selected():
-    if not can_start_new_task():
-        return
-    lock_ui("NSLOOKUP")
-
+    # seçili cihaz varsa IP'sini al
     sel = device_tree.selection()
     if sel:
         target = device_tree.item(sel[0])["values"][1]
@@ -1202,7 +1127,6 @@ def start_nslookup_selected():
 
     if not target:
         messagebox.showwarning("Uyarı", "NSLOOKUP için bir hedef girin (IP veya domain).")
-        unlock_ui()
         return
 
     output_box.config(state=tk.NORMAL)
@@ -1211,19 +1135,8 @@ def start_nslookup_selected():
 
     stop_ping()
 
-    tid = task_id
-    threading.Thread(target=nslookup_worker, args=(target, None, tid), daemon=True).start()
+    threading.Thread(target=nslookup_worker, args=(target,), daemon=True).start()
 
-def stop_ping_silent():
-    global is_running, ping_process
-    is_running = False
-
-    if ping_process:
-        try:
-            ping_process.terminate()
-        except:
-            pass
-        ping_process = None
 
 def stop_ping(event=None):
     global is_running, ping_process
@@ -1239,62 +1152,19 @@ def stop_ping(event=None):
         except Exception:
             pass
         ping_process = None
-    
-    unlock_ui()
-
-def stop_traceroute():
-    global traceroute_process
-
-    if traceroute_process:
-        try:
-            traceroute_process.terminate()
-        except:
-            pass
-        traceroute_process = None
-
-    unlock_ui()
-
-def stop_nslookup():
-    global nslookup_process
-
-    if nslookup_process:
-        try:
-            nslookup_process.terminate()
-        except:
-            pass
-        nslookup_process = None
-
-    unlock_ui()
 
 
 def toggle_ping():
-    global current_task
-
     # Port Test çalışıyorsa Durdur butonu onu iptal etsin
-    if current_task == "PORTTEST":
+    if is_port_test_running:
         stop_port_test()
         return
 
-    # Traceroute / NSLOOKUP durdurma yok (istersen ekleriz ama şimdilik engelleme yeter)
-    # Ping çalışıyorsa
-    if current_task == "PING":
+    # normal ping toggle
+    if is_running:
         stop_ping()
-        return
-
-    # Bulk çalışıyorsa şimdilik durdurma yok (istersen ekleriz)
-    if current_task == "BULK":
-        messagebox.showinfo("Bilgi", "Toplu Ping iptali şu an yok.")
-        return
-    
-    if current_task == "TRACE":
-        stop_traceroute()
-        return
-
-    if current_task == "NSLOOKUP":
-        stop_nslookup()
-        return
-    # hiç iş yoksa ping başlat
-    start_ping()
+    else:
+        start_ping()
 
 
 def refresh_from_excel():
@@ -1672,9 +1542,6 @@ def show_sort_menu(event, col):
 
 # ---------------- CONTEXT MENU ----------------
 def start_bulk_ping():
-    if not can_start_new_task():
-        return
-    lock_ui("BULK")
     global is_bulk_running, bulk_total, bulk_done
 
     if is_running:
