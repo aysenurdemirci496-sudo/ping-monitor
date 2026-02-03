@@ -570,9 +570,6 @@ def check_port(ip, port, timeout=1.0):
             return True
     except:
         return False
-
-
-
    
 def port_test_worker(ip, mode="fast"):
     global is_port_test_running, stop_port_test_flag, open_ports_found
