@@ -938,7 +938,7 @@ def select_excel_file():
 
     path = filedialog.askopenfilename(
         title="Excel dosyasını seç",
-        filetypes=[("Excel Files", "*.xlsx *.xls")]
+        filetypes=[("Excel Files", "*.xlsx *.xlsm *.xls")]
     )
 
     if not path:
