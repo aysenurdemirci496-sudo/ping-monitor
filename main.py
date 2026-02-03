@@ -572,13 +572,15 @@ def check_port(ip, port, timeout=1.0):
         return False
 
 
+
+   
 def port_test_worker(ip, mode="fast"):
+    global is_port_test_running, stop_port_test_flag, open_ports_found
+    open_ports_found = []   # ✅ her testte sıfırla
     """
     mode = "fast"  -> PRIORITY + SECONDARY
     mode = "full"  -> PRIORITY + ALL_PORTS
     """
-    global is_port_test_running, stop_port_test_flag
-
     is_port_test_running = True
     stop_port_test_flag = False
 
@@ -931,8 +933,15 @@ def process_ui_queue():
         elif item_type == "PORT_TEST_RESULT":
             port, name, ok, phase_name = payload
 
+            # sadece OPEN'ları kaydet
             if ok:
                 open_ports_found.append((port, name))
+
+                # OPEN olunca ekrana da yaz (az satır -> UI donmaz)
+                output_box.config(state=tk.NORMAL)
+                output_box.insert(tk.END, f"{port:<5} ({name}) -> OPEN ✅\n")
+                output_box.see(tk.END)
+                output_box.config(state=tk.DISABLED)
 
         elif item_type == "PORT_TEST_DONE":
             done, total, open_count, closed_count = payload
@@ -1101,8 +1110,13 @@ def start_port_test_selected(mode="fast"):
     threading.Thread(target=port_test_worker, args=(ip, mode), daemon=True).start()
 
 def stop_port_test():
-    global stop_port_test_flag
+    global stop_port_test_flag, is_port_test_running
     stop_port_test_flag = True
+
+    # UI'yi anında toparla
+    start_btn.config(text="▶ Başlat")
+    bulk_status_label.config(text="Port test durduruluyor...")
+    root.after(2000, lambda: bulk_status_label.config(text=""))
 
 def start_nslookup_selected():
     # seçili cihaz varsa IP'sini al
