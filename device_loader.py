@@ -1,22 +1,19 @@
 import json
 import os
 from openpyxl import load_workbook
-from openpyxl import load_workbook
 
+def open_excel(path):
+    if path.lower().endswith(".xlsm"):
+        return load_workbook(path, keep_vba=True)
+    else:
+        return load_workbook(path)
 
 DEVICES_XLSX = "devices.xlsx"
 
-def load_devices_from_excel(path, mapping):
-    if not path or not os.path.exists(path):
-        raise ValueError("Excel dosya yolu geçersiz")
-
-    if not path.lower().endswith((".xlsx", ".xlsm", ".xltx", ".xltm")):
-        raise ValueError(f"Desteklenmeyen Excel formatı: {path}")
 
 def add_device_to_excel(device, excel_path, excel_mapping):
-    from openpyxl import load_workbook
 
-    wb = load_workbook(excel_path)
+    wb = open_excel(excel_path)
     ws = wb.active
 
     headers = [cell.value for cell in ws[1]]
@@ -58,9 +55,8 @@ def load_devices_from_excel(path, mapping):
         pass   # pandas yoksa sessizce devam et
 
     # 2️⃣ FALLBACK → OPENPYXL
-    from openpyxl import load_workbook
 
-    wb = load_workbook(path, data_only=True)
+    wb = open_excel(path)
     ws = wb.active
 
     headers = [cell.value for cell in ws[1]]
@@ -86,7 +82,7 @@ def update_device_in_excel(old_ip, updated_device, excel_path, mapping):
     if not os.path.exists(excel_path):
         return
 
-    wb = load_workbook(excel_path)
+    wb = open_excel(excel_path)
     ws = wb.active
 
     # Excel başlıklarını al
@@ -132,7 +128,7 @@ def delete_device_from_excel(ip, excel_path, excel_mapping):
     if not excel_path or not excel_mapping:
         return
 
-    wb = load_workbook(excel_path)
+    wb = open_excel(excel_path)
     ws = wb.active
 
     ip_col_header = excel_mapping.get("ip")
